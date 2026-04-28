@@ -1,0 +1,50 @@
+paths:
+  vocab: vocab/vocab_full.json
+  merges: merges/merges_full.json
+  train_text: data/TinyStoriesV2-GPT4-train.txt
+  val_text: data/TinyStoriesV2-GPT4-valid.txt
+  train_bin: tokens/train.bin
+  val_bin: tokens/val.bin
+  checkpoint_dir: checkpoints
+  checkpoint_name: latest.pt
+
+tokenizer:
+  vocab_size: 10000
+  special_tokens:
+    - "<|endoftext|>"
+
+model:
+  d_model: 512
+  d_ff: 1344
+  num_layers: 6
+  num_heads: 16
+  context_length: 256
+  rope_theta: 10000
+
+optimizer:
+  lr: 0.001
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+
+training:
+  device: cuda
+  batch_size: 64
+  training_steps: 5000
+  val_interval: 200
+  val_batches: 256
+  ckpt_interval: 1000
+  final_val_batches: 256
+
+generation:
+  device: cuda
+  max_new_tokens: 2000
+  prompt: "<|endoftext|>"
+  temperature: 0.5
+  end_token: "<|endoftext|>"
+  top_p : 0.5
+
+
+scheduler:
+  a_max: 0.003
+  a_min: 0.0003
+  warmup_steps: 200
