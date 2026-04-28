@@ -238,7 +238,7 @@ class BasicsTransformerLM(nn.Module):
             (batch size, sequence_length, vocab_size) with the predicted unnormalized next-word
             distribution for each token.
         """
-        _, sequence_length = x.size()
+        _, _, sequence_length = x.size()
         # (batch size, sequence_length, d_model)
         # NOTE: paper mentions "In the embedding layers, we multiply those
         # weights by sqrt(d_model)", but we aren't doing that here.
