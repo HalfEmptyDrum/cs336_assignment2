@@ -61,7 +61,7 @@ MODEL_CONFIGS: dict[ModelSize, ModelConfig] = {
 
 OPTIMIZER_CONFIG: OptimizerConfig = OptimizerConfig(lr=1e-3, betas=(0.9, 0.999), eps=1e-8, weight_decay=0.01)
 
-TRAIN_CONFIG: TrainConfig = TrainConfig(batch_size=4, context_length=256, warmup_steps=5, timing_steps=10)
+TRAIN_CONFIG: TrainConfig = TrainConfig(batch_size=4, context_length=256, warmup_steps=5, timing_steps=100)
 
 
 def parse_args():
