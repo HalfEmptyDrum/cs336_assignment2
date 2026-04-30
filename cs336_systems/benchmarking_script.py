@@ -12,6 +12,10 @@ from cs336_basics.model import BasicsTransformerLM
 from cs336_basics.optimizer import AdamW
 from cs336_basics.nn_utils import cross_entropy
 
+import timeit
+
+import tqdm
+
 
 class ModelSize(StrEnum):
     SMALL = "small"
@@ -57,7 +61,7 @@ MODEL_CONFIGS: dict[ModelSize, ModelConfig] = {
 
 OPTIMIZER_CONFIG: OptimizerConfig = OptimizerConfig(lr=1e-3, betas=(0.9, 0.999), eps=1e-8, weight_decay=0.01)
 
-TRAIN_CONFIG: TrainConfig = TrainConfig(batch_size=32, context_length=256, warmup_steps=100, timing_steps=100)
+TRAIN_CONFIG: TrainConfig = TrainConfig(batch_size=4, context_length=256, warmup_steps=5, timing_steps=10)
 
 
 def parse_args():
@@ -70,47 +74,95 @@ def parse_args():
     return p.parse_args()
 
 
-def run_model(model, optimizer, model_cfg, optim_cfg, train_cfg):
-    optimizer.zero_grad()
-        
-    x = torch.randn(train_cfg.batch_size, train_cfg.context_length, model_cfg.d_model) # (B, T, d_model)
-    target = torch.randn(train_cfg.batch_size, train_cfg.context_length)
-    
-    print(x.shape)
-    
-    pred = model(x)
-    pred = rearrange(pred, "B T V -> (B T) V")
-    
-    loss = cross_entropy(pred, target)
-    loss.backward()
-    optimizer.step()
+
+
 
 def benchmark(model_size: ModelSize, experiment: str):
+    if torch.cuda.is_available():
+        device = "cuda"
+    elif torch.backends.mps.is_available():
+        device = "mps"
+    else:
+        device = "cpu"
+    print(f"Using device: {device}")
+    vocab_size=10000
     model_cfg = MODEL_CONFIGS[model_size]
     optim_cfg = OPTIMIZER_CONFIG
     train_cfg = TRAIN_CONFIG
+    
     model = BasicsTransformerLM(    # was: model = model(...)  ← bug
-        vocab_size=10_000,
+        vocab_size=vocab_size,
         context_length=256,
-        rope_theta=10_000.0,
-        **asdict(model_cfg),
-    )
+        rope_theta=10000.0,
+        **asdict(model_cfg)
+    ).to(device)
     print(f"Built {model_size} model with {sum(p.numel() for p in model.parameters()):,} params")
     
     
     optimizer = AdamW(model.parameters(), lr=optim_cfg.lr, weight_decay=optim_cfg.weight_decay, betas=optim_cfg.betas)
     
     
-    print("warmup...")
-    for _ in range(train_cfg.warmup_steps):
-        run_model(model, optimizer, model_cfg, optim_cfg, train_cfg)
-    print("done with warmup.")
+    time = {'forward': torch.empty(0), 'backward': torch.empty(0), 'optimizer': torch.empty(0)}
+    
+    def synchronize(device):
+        if device == "cuda":
+            torch.cuda.synchronize()
+        if device == "mps":
+            torch.mps.synchronize()
         
-    print("timing...")
-    for _ in range(train_cfg.timing_steps):
-        run_model(model, optimizer, model_cfg, optim_cfg, train_cfg)
+    
+    for i in tqdm.tqdm(range(train_cfg.warmup_steps + train_cfg.timing_steps)):
         
-    print("done with timing.")
+        optimizer.zero_grad()
+
+
+
+        x = torch.randint(0, vocab_size, (train_cfg.batch_size, train_cfg.context_length), device=device)
+        target = torch.randint(0, vocab_size, (train_cfg.batch_size, train_cfg.context_length), device=device)
+        
+        
+        synchronize(device)    
+        start_forward = timeit.default_timer()
+        
+        pred = model(x)
+        synchronize(device)
+        
+        end_forward = timeit.default_timer()
+
+        pred = rearrange(pred, "B T V -> (B T) V")            # (B*T, V)
+        target = rearrange(target, "B T -> (B T)")            # (B
+        
+        
+        loss = cross_entropy(pred, target)
+        start_backward = timeit.default_timer()
+        
+        loss.backward()
+        synchronize(device)
+        
+        end_backward = timeit.default_timer()
+        
+        start_optimizer = timeit.default_timer()
+        
+        optimizer.step()
+        synchronize(device)
+        
+        end_optimizer = timeit.default_timer()
+        
+        if i >= train_cfg.warmup_steps:
+            time["forward"] = torch.cat((time["forward"], torch.tensor([end_forward - start_forward])), dim=-1)
+            time["backward"] = torch.cat((time["backward"], torch.tensor([end_backward - start_backward])), dim=-1)
+            time["optimizer"] = torch.cat((time["optimizer"], torch.tensor([end_optimizer - start_optimizer])), dim=-1)
+            
+
+        
+
+    total_time = sum(sum(times) for times in time.values())
+
+    for item in time.keys():
+        print(f"{item} : {sum(time[item]) / total_time * 100:.2f}%")
+
+        print(f"{item} - std = {time[item].std()}")
+    
 
         
     
