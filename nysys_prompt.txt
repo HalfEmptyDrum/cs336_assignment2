@@ -1,0 +1,8 @@
+    nsys profile \
+      --trace=cuda,cudnn,cublas,nvtx,osrt \
+      --pytorch=autograd-nvtx \
+      --capture-range=cudaProfilerApi \
+      --capture-range-end=stop \
+      --force-overwrite=true \
+      -o myrun \
+      uv run python profile_run.py
