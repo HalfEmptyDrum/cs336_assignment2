@@ -232,7 +232,6 @@ class BasicsTransformerLM(nn.Module):
         return n_params
 
 
-    @nvtx.range("forward language LM")
     def forward(self, x: Int[Tensor, " ... sequence_length"]) -> Float[Tensor, " ... sequence_length vocab_size"]:
         """
         Args:
@@ -246,9 +245,7 @@ class BasicsTransformerLM(nn.Module):
         # (batch size, sequence_length, d_model)
         # NOTE: paper mentions "In the embedding layers, we multiply those
         # weights by sqrt(d_model)", but we aren't doing that here.
-        
-        with nvtx.range("embedding"):
-            embedded_tokens = self.token_embeddings(x)
+        embedded_tokens = self.token_embeddings(x)
 
         # (batch size, sequence_length, d_model)
         # x = self.positional_encoder(embedded_tokens, positions)
@@ -259,12 +256,10 @@ class BasicsTransformerLM(nn.Module):
             x = layer(x)
         # (batch size, sequence_length, d_model)
         
-        with nvtx.range("final linear layer"):
-            x = self.ln_final(x)
+        x = self.ln_final(x)
         # (batch size, sequence_length, vocab_size)
         
-        with nvtx.range("final logits"):
-            logits = self.lm_head(x)
+        logits = self.lm_head(x)
         return logits
 
     @torch.no_grad()
@@ -377,6 +372,8 @@ class TransformerBlock(nn.Module):
         self.ln1 = RMSNorm(d_model)
         self.ln2 = RMSNorm(d_model)
 
+
+    
     def forward(self, x: torch.Tensor):
         """
         Args:
@@ -389,11 +386,13 @@ class TransformerBlock(nn.Module):
         # NOTE: this is a pre-norm Transformer, and differs from the original
         # description in the paper.
         # Apply the multi-head self-attention sublayer
-        x_attn = self.attn(self.ln1(x))
+        with nvtx.range("Attention Mechanism"):
+            x_attn = self.attn(self.ln1(x))
         attn_sublayer_output = x + x_attn
 
         # Apply the feed-forward sublayer
-        x_ffn = self.ffn(self.ln2(attn_sublayer_output))
+        with nvtx.range("FF"):
+            x_ffn = self.ffn(self.ln2(attn_sublayer_output))
         ffn_sublayer_output = attn_sublayer_output + x_ffn
         return ffn_sublayer_output
 
@@ -536,22 +535,27 @@ class CausalMultiHeadSelfAttention(nn.Module):
             for X in (Q, K, V)
         )  # fmt: skip
 
-        if self.positional_encoder is not None:  # RoPE is enabled
-            if token_positions is not None:  # We got explicit position ids
-                # Duplicate token positions for each head
-                token_positions = rearrange(token_positions, "... seq -> ... 1 seq")
 
-            Q = self.positional_encoder(Q, token_positions)
-            K = self.positional_encoder(K, token_positions)
+        with nvtx.range("RoPE"):
+            if self.positional_encoder is not None:  # RoPE is enabled
+                if token_positions is not None:  # We got explicit position ids
+                    # Duplicate token positions for each head
+                    token_positions = rearrange(token_positions, "... seq -> ... 1 seq")
 
-        # Construct causal mask
-        iota = torch.arange(sequence_length, device=x.device)
-        qi = rearrange(iota, "query -> query 1")
-        kj = rearrange(iota, "key   -> 1   key")
-        causal_mask = qi >= kj  # (query, key)
-        causal_mask = causal_mask.__getitem__((None,) * len(batch_dims) + (...,))  # Add appropriate leading dimensions
+                Q = self.positional_encoder(Q, token_positions)
+                K = self.positional_encoder(K, token_positions)
 
-        # Shape: (..., num_heads, sequence_length, d_k)
+        
+        with nvtx.range("Construct causal mask"):
+            # Construct causal mask
+            iota = torch.arange(sequence_length, device=x.device)
+            qi = rearrange(iota, "query -> query 1")
+            kj = rearrange(iota, "key   -> 1   key")
+            causal_mask = qi >= kj  # (query, key)
+            causal_mask = causal_mask.__getitem__((None,) * len(batch_dims) + (...,))  # Add appropriate leading dimensions
+
+
+            # Shape: (..., num_heads, sequence_length, d_k)
         attn_output = scaled_dot_product_attention(K=K, Q=Q, V=V, mask=causal_mask)
 
         # Concatenate the attention output from all heads.
