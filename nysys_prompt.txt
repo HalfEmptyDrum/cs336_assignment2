@@ -1,7 +1,8 @@
-    nsys profile \
-      --trace=cuda,cudnn,cublas,nvtx,osrt \
-      --capture-range=cudaProfilerApi \
-      --capture-range-end=stop \
-      --force-overwrite=true \
-      -o myrun \
-      uv run python cs336_systems/benchmark.py
+nsys profile \
+  --trace=cuda,cudnn,cublas,nvtx,osrt \
+  --capture-range=nvtx \
+  --nvtx-capture="profile_region" \
+  --capture-range-end=stop \
+  --force-overwrite=true \
+  -o new_annotations \
+  uv run python cs336_systems/benchmark.py

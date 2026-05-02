@@ -231,6 +231,8 @@ class BasicsTransformerLM(nn.Module):
         n_params = sum(p.numel() for p in self.parameters())
         return n_params
 
+
+    @nvtx.range("forward language LM")
     def forward(self, x: Int[Tensor, " ... sequence_length"]) -> Float[Tensor, " ... sequence_length vocab_size"]:
         """
         Args:
@@ -244,7 +246,9 @@ class BasicsTransformerLM(nn.Module):
         # (batch size, sequence_length, d_model)
         # NOTE: paper mentions "In the embedding layers, we multiply those
         # weights by sqrt(d_model)", but we aren't doing that here.
-        embedded_tokens = self.token_embeddings(x)
+        
+        with nvtx.range("embedding"):
+            embedded_tokens = self.token_embeddings(x)
 
         # (batch size, sequence_length, d_model)
         # x = self.positional_encoder(embedded_tokens, positions)
@@ -254,9 +258,13 @@ class BasicsTransformerLM(nn.Module):
             # (batch size, sequence_length, d_model)
             x = layer(x)
         # (batch size, sequence_length, d_model)
-        x = self.ln_final(x)
+        
+        with nvtx.range("final linear layer"):
+            x = self.ln_final(x)
         # (batch size, sequence_length, vocab_size)
-        logits = self.lm_head(x)
+        
+        with nvtx.range("final logits"):
+            logits = self.lm_head(x)
         return logits
 
     @torch.no_grad()
@@ -502,6 +510,7 @@ class CausalMultiHeadSelfAttention(nn.Module):
 
         self.positional_encoder: RotaryEmbedding | None = positional_encoder  # RoPE
 
+    @nvtx.range("multi-head attention")
     def forward(
         self, x: Float[Tensor, " ... seq d_k"], token_positions: Int[Tensor, " ... seq"] | None = None
     ) -> Float[Tensor, " ... seq d_v"]:
@@ -516,9 +525,10 @@ class CausalMultiHeadSelfAttention(nn.Module):
         *batch_dims, sequence_length, d_model = x.size()
         assert d_model == self.d_model
 
-        Q = self.q_proj(x)
-        K = self.k_proj(x)
-        V = self.v_proj(x)
+        with nvtx.range("qkv projections"):
+            Q = self.q_proj(x)
+            K = self.k_proj(x)
+            V = self.v_proj(x)
 
         # Take apart each head from the embedding dimension of Q, K, V to shape (..., num_heads, seq_len, d_k).
         Q, K, V = (
@@ -549,7 +559,8 @@ class CausalMultiHeadSelfAttention(nn.Module):
         attn_output = rearrange(attn_output, "batch heads seq d_v -> batch seq (heads d_v)").contiguous()
 
         # Apply the output projection
-        output = self.output_proj(attn_output)
+        with nvtx.range("output projection"):
+            output = self.output_proj(attn_output)
         return output
 
 

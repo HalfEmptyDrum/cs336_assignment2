@@ -13,7 +13,7 @@ from cs336_basics.optimizer import AdamW
 from cs336_basics.nn_utils import cross_entropy
 
 cs336_basics.model.scaled_dot_product_attention = cs336_basics.model.annotated_scaled_dot_product_attention
-
+import torch.cuda.nvtx as nvtx
 
 
 import tqdm
@@ -103,9 +103,11 @@ def benchmark(model_size: ModelSize, experiment: str):
         
     
     for i in tqdm.tqdm(range(train_cfg.warmup_steps + train_cfg.timing_steps)):
-        
+        if i == train_cfg.warmup_steps:
+            torch.cuda.synchronize()
+            nvtx.range_push("profile_region")
+            
         optimizer.zero_grad()
-
 
         x = torch.randint(0, vocab_size, (train_cfg.batch_size, train_cfg.context_length), device=device)
         target = torch.randint(0, vocab_size, (train_cfg.batch_size, train_cfg.context_length), device=device)
@@ -113,10 +115,8 @@ def benchmark(model_size: ModelSize, experiment: str):
         with nvtx.range("forward"):
             pred = model(x)
         
-
         pred = rearrange(pred, "B T V -> (B T) V")            # (B*T, V)
         target = rearrange(target, "B T -> (B T)")            # (B
-        
         
         loss = cross_entropy(pred, target)
         
@@ -126,7 +126,8 @@ def benchmark(model_size: ModelSize, experiment: str):
         with nvtx.range("optimizer"):
             optimizer.step()
         
-        
+    torch.cuda.synchronize()
+    nvtx.range_pop()
   
 
     
