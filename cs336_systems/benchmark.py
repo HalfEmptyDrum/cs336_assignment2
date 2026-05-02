@@ -12,7 +12,9 @@ from cs336_basics.model import BasicsTransformerLM
 from cs336_basics.optimizer import AdamW
 from cs336_basics.nn_utils import cross_entropy
 
-import timeit
+cs336_basics.model.scaled_dot_product_attention = cs336_basics.model.annotated_scaled_dot_product_attention
+
+
 
 import tqdm
 
@@ -74,9 +76,6 @@ def parse_args():
     return p.parse_args()
 
 
-
-
-
 def benchmark(model_size: ModelSize, experiment: str):
     if torch.cuda.is_available():
         device = "cuda"
@@ -100,15 +99,7 @@ def benchmark(model_size: ModelSize, experiment: str):
     
     
     optimizer = AdamW(model.parameters(), lr=optim_cfg.lr, weight_decay=optim_cfg.weight_decay, betas=optim_cfg.betas)
-    
-    
-    time = {'forward': torch.empty(0), 'backward': torch.empty(0), 'optimizer': torch.empty(0)}
-    
-    def synchronize(device):
-        if device == "cuda":
-            torch.cuda.synchronize()
-        if device == "mps":
-            torch.mps.synchronize()
+
         
     
     for i in tqdm.tqdm(range(train_cfg.warmup_steps + train_cfg.timing_steps)):
@@ -116,52 +107,28 @@ def benchmark(model_size: ModelSize, experiment: str):
         optimizer.zero_grad()
 
 
-
         x = torch.randint(0, vocab_size, (train_cfg.batch_size, train_cfg.context_length), device=device)
         target = torch.randint(0, vocab_size, (train_cfg.batch_size, train_cfg.context_length), device=device)
+
+        with nvtx.range("forward"):
+            pred = model(x)
         
-        
-        synchronize(device)    
-        start_forward = timeit.default_timer()
-        
-        pred = model(x)
-        synchronize(device)
-        
-        end_forward = timeit.default_timer()
 
         pred = rearrange(pred, "B T V -> (B T) V")            # (B*T, V)
         target = rearrange(target, "B T -> (B T)")            # (B
         
         
         loss = cross_entropy(pred, target)
-        start_backward = timeit.default_timer()
         
-        loss.backward()
-        synchronize(device)
+        with nvtx.range("backward"):
+            loss.backward()
         
-        end_backward = timeit.default_timer()
+        with nvtx.range("optimizer"):
+            optimizer.step()
         
-        start_optimizer = timeit.default_timer()
         
-        optimizer.step()
-        synchronize(device)
-        
-        end_optimizer = timeit.default_timer()
-        
-        if i >= train_cfg.warmup_steps:
-            time["forward"] = torch.cat((time["forward"], torch.tensor([end_forward - start_forward])), dim=-1)
-            time["backward"] = torch.cat((time["backward"], torch.tensor([end_backward - start_backward])), dim=-1)
-            time["optimizer"] = torch.cat((time["optimizer"], torch.tensor([end_optimizer - start_optimizer])), dim=-1)
-            
+  
 
-        
-
-    total_time = sum(sum(times) for times in time.values())
-
-    for item in time.keys():
-        print(f"{item} : {sum(time[item]) / total_time * 100:.2f}%")
-
-        print(f"{item} - std = {time[item].std()}")
     
 
         
