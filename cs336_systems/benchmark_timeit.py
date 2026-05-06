@@ -6,6 +6,8 @@ from einops import rearrange
 
 import torch
 
+import timeit
+
 import cs336_basics
 
 from cs336_basics.model import BasicsTransformerLM
@@ -100,34 +102,62 @@ def benchmark(model_size: ModelSize, experiment: str):
     
     optimizer = AdamW(model.parameters(), lr=optim_cfg.lr, weight_decay=optim_cfg.weight_decay, betas=optim_cfg.betas)
 
-    
-    
+    time_taken = {"forward": [], "backward": [], "optimizer": []}
+
     for i in tqdm.tqdm(range(train_cfg.warmup_steps + train_cfg.timing_steps)):
-        if i == train_cfg.warmup_steps:
-            torch.cuda.synchronize()
-            nvtx.range_push("profile_region")
             
-        optimizer.zero_grad()
+        optimizer.zero_grad() 
 
         x = torch.randint(0, vocab_size, (train_cfg.batch_size, train_cfg.context_length), device=device)
         target = torch.randint(0, vocab_size, (train_cfg.batch_size, train_cfg.context_length), device=device)
 
-        with nvtx.range("forward"):
-            pred = model(x)
+        torch.cuda.synchronize()
+        start = timeit.default_timer()
+        pred = model(x)
+        torch.cuda.synchronize()
+        end = timeit.default_timer()
+        time_taken["forward"].append(end - start)
         
         pred = rearrange(pred, "B T V -> (B T) V")            # (B*T, V)
         target = rearrange(target, "B T -> (B T)")            # (B
         
         loss = cross_entropy(pred, target)
         
-        with nvtx.range("backward"):
-            loss.backward()
+        torch.cuda.synchronize()
+        start = timeit.default_timer()
+        loss.backward()
+        torch.cuda.synchronize()
+        end = timeit.default_timer()
         
-        with nvtx.range("optimizer"):
-            optimizer.step()
+        time_taken["backward"].append(end - start)
+
+        torch.cuda.synchronize()
+        start = timeit.default_timer()
+        optimizer.step()
+        torch.cuda.synchronize()
+        end = timeit.default_timer()
         
-    torch.cuda.synchronize()
-    nvtx.range_pop()
+        time_taken["optimizer"].append(end - start)
+    
+    
+    
+    print(r"\begin{tabular}{lrrrr}")
+    print(r"\toprule")
+    print(r"Phase & Mean (ms) & Std (ms) & Min (ms) & Median (ms) \\")
+    print(r"\midrule")
+
+    for part in time_taken.keys():
+        times = torch.tensor(time_taken[part][train_cfg.warmup_steps:]) * 1000
+        print(f"{part.capitalize()} & "
+            f"{times.mean():.3f} & "
+            f"{times.std():.3f} & "
+            f"{times.min():.3f} & "
+            f"{times.median():.3f} \\\\")
+
+    print(r"\bottomrule")
+    print(r"\end{tabular}")
+        
+
   
 
     
